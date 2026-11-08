@@ -5,6 +5,7 @@ import {
   EditorSuggest,
   EditorSuggestContext,
   MarkdownPostProcessorContext,
+  MarkdownRenderer,
   Plugin,
   TFile,
 } from "obsidian";
@@ -62,6 +63,14 @@ function nextBlockId(markdown: string): string {
   return `${ID_PREFIX}-${highest + 1}`;
 }
 
+function indentationWidth(indent: string): number {
+  let width = 0;
+  for (const char of indent) {
+    width += char === "\t" ? 4 - (width % 4) : 1;
+  }
+  return width;
+}
+
 function extractSubtreeLines(lines: string[], startIndex: number): { text: string; endIndex: number } | null {
   if (startIndex >= lines.length) return null;
 
@@ -69,14 +78,14 @@ function extractSubtreeLines(lines: string[], startIndex: number): { text: strin
   const match = startLine.match(/^\s*(?:[-*+]|\d+\.)\s+(.*)$/);
   if (!match) return null;
 
-  const baseIndent = startLine.match(/^\s*/)?.[0].length ?? 0;
+  const baseIndent = indentationWidth(startLine.match(/^[ \t]*/)?.[0] ?? "");
   const subtree: string[] = [startLine];
   let index = startIndex + 1;
 
   while (index < lines.length) {
     const line = lines[index];
     const listMatch = line.match(/^\s*(?:[-*+]|\d+\.)\s+/);
-    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    const indent = indentationWidth(line.match(/^[ \t]*/)?.[0] ?? "");
 
     if (!line.trim()) {
       subtree.push(line);
@@ -98,7 +107,12 @@ function extractSubtreeLines(lines: string[], startIndex: number): { text: strin
     index += 1;
   }
 
-  return { text: subtree.join("\n"), endIndex: index };
+  const text = subtree.map((line) => {
+    const indent = line.match(/^[ \t]*/)?.[0] ?? "";
+    const remaining = Math.max(0, indentationWidth(indent) - baseIndent);
+    return " ".repeat(remaining) + line.slice(indent.length);
+  }).join("\n");
+  return { text, endIndex: index };
 }
 
 function renderSubtreeToText(subtree: string): string {
@@ -258,6 +272,7 @@ export default class DependencyBulletListsPlugin extends Plugin {
 
   async renderDependencyBullets(el: HTMLElement, ctx: MarkdownPostProcessorContext): Promise<void> {
     if (!hasFrontmatterFlag(ctx.frontmatter ?? null)) return;
+    if (el.closest(".dbbl-portal")) return;
 
     this.decorateLeafBullets(el);
     await this.renderPortalTargets(el, ctx.sourcePath);
@@ -280,17 +295,28 @@ export default class DependencyBulletListsPlugin extends Plugin {
     }
   }
 
-  async renderPortalTargets(el: HTMLElement, sourcePath: string): Promise<void> {
-    const file = this.app.vault.getAbstractFileByPath(sourcePath);
-    if (!(file instanceof TFile)) return;
-
-    const source = await this.app.vault.read(file);
+  async renderPortalTargets(
+    el: HTMLElement,
+    sourcePath: string,
+    source?: string,
+    ancestors: ReadonlySet<string> = new Set(),
+  ): Promise<void> {
+    if (source === undefined) {
+      const file = this.app.vault.getAbstractFileByPath(sourcePath);
+      if (!(file instanceof TFile)) return;
+      source = await this.app.vault.read(file);
+    }
     const candidates = Array.from(el.querySelectorAll("a.internal-link, span.internal-link"));
 
     for (const link of candidates) {
       const href = link.getAttribute("href") ?? link.getAttribute("data-href") ?? "";
       const portalId = href.match(/#\^?([A-Za-z0-9-]+)/)?.[1];
       if (!portalId) continue;
+
+      if (ancestors.has(portalId)) {
+        link.replaceWith(document.createTextNode(`[circular portal: #^${portalId}]`));
+        continue;
+      }
 
       const subtree = this.findListSubtree(source, portalId);
       if (!subtree) {
@@ -300,12 +326,8 @@ export default class DependencyBulletListsPlugin extends Plugin {
 
       const wrapper = document.createElement("div");
       wrapper.className = "dbbl-portal";
-      const rendered = renderSubtreeToList(subtree);
-      if (rendered) {
-        wrapper.appendChild(rendered);
-      } else {
-        wrapper.textContent = renderSubtreeToText(subtree);
-      }
+      await MarkdownRenderer.render(this.app, subtree, wrapper, sourcePath, this);
+      await this.renderPortalTargets(wrapper, sourcePath, source, new Set([...ancestors, portalId]));
       link.replaceWith(wrapper);
     }
   }

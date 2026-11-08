@@ -1,0 +1,142 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
+const ts = require("typescript");
+
+class Element {
+  constructor() {
+    this.children = [];
+    this.attributes = {};
+  }
+
+  getAttribute(name) {
+    return this.attributes[name] ?? null;
+  }
+
+  querySelectorAll() {
+    return this.children.flatMap((child) =>
+      child instanceof Link ? [child] : child instanceof Element ? child.querySelectorAll() : [],
+    );
+  }
+
+  replaceWith(replacement) {
+    const index = this.parent.children.indexOf(this);
+    this.parent.children[index] = replacement;
+    replacement.parent = this.parent;
+  }
+
+  append(child) {
+    child.parent = this;
+    this.children.push(child);
+  }
+}
+
+class Link extends Element {
+  constructor(id) {
+    super();
+    this.attributes.href = `#^${id}`;
+  }
+}
+
+class TFile {}
+const rendered = [];
+const obsidian = {
+  Plugin: class {},
+  EditorSuggest: class {},
+  TFile,
+  MarkdownRenderer: {
+    async render(_app, markdown, wrapper) {
+      rendered.push(markdown);
+      for (const match of markdown.matchAll(/\[\[#\^([A-Za-z0-9-]+)\]\]/g)) {
+        wrapper.append(new Link(match[1]));
+      }
+    },
+  },
+};
+
+const source = fs.readFileSync(path.join(__dirname, "..", "main.ts"), "utf8");
+const code = ts.transpileModule(source, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018 },
+}).outputText;
+const moduleStub = { exports: {} };
+vm.runInNewContext(code, {
+  module: moduleStub,
+  exports: moduleStub.exports,
+  require: (name) => {
+    assert.equal(name, "obsidian");
+    return obsidian;
+  },
+  document: {
+    createElement: () => new Element(),
+    createTextNode: (text) => ({ textContent: text }),
+  },
+});
+const Plugin = moduleStub.exports.default;
+
+function createPlugin(markdown) {
+  const file = new TFile();
+  const plugin = new Plugin();
+  plugin.app = {
+    vault: {
+      getAbstractFileByPath: () => file,
+      read: async () => markdown,
+    },
+  };
+  return plugin;
+}
+
+test("dedents nested targets while retaining relative indentation and continuation text", () => {
+  const plugin = createPlugin("");
+  const markdown = [
+    "- Parent",
+    "\t- Target ^dbbl-1",
+    "\t\t- Child",
+    "\t\t\t- Grandchild",
+    "\t\t  continuation",
+    "\t- Sibling",
+  ].join("\n");
+  assert.equal(
+    plugin.findListSubtree(markdown, "dbbl-1"),
+    "- Target ^dbbl-1\n    - Child\n        - Grandchild\n      continuation",
+  );
+  assert.equal(plugin.findListSubtree("- Root ^dbbl-2\n  - Child", "dbbl-2"), "- Root ^dbbl-2\n  - Child");
+});
+
+test("renders nested portals as dedented lists and allows repeated references", async () => {
+  rendered.length = 0;
+  const markdown = [
+    "- Root",
+    "    - Outer ^dbbl-1",
+    "        - [[#^dbbl-2]]",
+    "        - [[#^dbbl-2]]",
+    "    - Inner ^dbbl-2",
+    "        - Leaf",
+  ].join("\n");
+  const root = new Element();
+  root.append(new Link("dbbl-1"));
+
+  await createPlugin(markdown).renderPortalTargets(root, "note.md");
+
+  assert.deepEqual(rendered, [
+    "- Outer ^dbbl-1\n    - [[#^dbbl-2]]\n    - [[#^dbbl-2]]",
+    "- Inner ^dbbl-2\n    - Leaf",
+    "- Inner ^dbbl-2\n    - Leaf",
+  ]);
+  assert.equal(root.children[0].children.length, 2);
+  assert.equal(root.children[0].children[0].className, "dbbl-portal");
+  assert.equal(root.children[0].children[1].className, "dbbl-portal");
+});
+
+test("reports circular portal references instead of recursing indefinitely", async () => {
+  rendered.length = 0;
+  const markdown = "- A ^dbbl-1\n  - [[#^dbbl-2]]\n- B ^dbbl-2\n  - [[#^dbbl-1]]";
+  const root = new Element();
+  root.append(new Link("dbbl-1"));
+
+  await createPlugin(markdown).renderPortalTargets(root, "note.md");
+
+  assert.equal(rendered.length, 2);
+  assert.equal(root.children[0].children[0].children[0].textContent, "[circular portal: #^dbbl-1]");
+});
