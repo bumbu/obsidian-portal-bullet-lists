@@ -1,0 +1,8 @@
+{
+  "id": "obsidian-dependency-bullet-lists",
+  "name": "Dependency Bullet Lists",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Custom bullet-list actions for the Obsidian Markdown editor.",
+  "isDesktopOnly": false
+}

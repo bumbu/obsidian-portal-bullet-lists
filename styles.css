@@ -1,0 +1,42 @@
+.dbbl-leaf-marker {
+  display: inline-block;
+  margin-right: 0.35em;
+  opacity: 0.8;
+}
+
+.dbbl-portal {
+  display: block;
+  margin: 0.2em 0 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.dbbl-portal > ul,
+.dbbl-portal > ol {
+  margin: 0;
+  padding-left: 1.2em;
+  list-style-position: outside;
+}
+
+.dbbl-portal > ul > li:first-child,
+.dbbl-portal > ol > li:first-child {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dbbl-portal > ul > li:first-child::marker,
+.dbbl-portal > ol > li:first-child::marker {
+  content: "";
+}
+
+.dbbl-portal > ul > li:first-child > ul,
+.dbbl-portal > ol > li:first-child > ul {
+  margin-top: 0.1em;
+}
+
+.dbbl-suggestion-item {
+  padding: 0.15em 0.5em;
+}
