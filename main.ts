@@ -28,6 +28,15 @@ function stripBlockId(text: string): string {
   return text.replace(/(?:^|\s)\^([A-Za-z0-9-]+)\s*$/, "").replace(/\s{2,}/g, " ").trim();
 }
 
+function isLinkOrPortalBullet(label: string): boolean {
+  const content = label.replace(/^\[[ xX]\]\s*/, "");
+  return /!?\[\[#\^[A-Za-z0-9-]+(?:\|[^\]]*)?\]\]/.test(content)
+    || /^!?\[\[[^\]]+\]\]$/.test(content)
+    || /^!?\[[^\]]+\]\([^)]+\)$/.test(content)
+    || /^<https?:\/\/[^>]+>$/.test(content)
+    || /^https?:\/\/\S+$/.test(content);
+}
+
 function parseBulletCandidates(markdown: string): BulletCandidate[] {
   const lines = markdown.split(/\r?\n/);
   const items: BulletCandidate[] = [];
@@ -40,7 +49,7 @@ function parseBulletCandidates(markdown: string): BulletCandidate[] {
     const rawText = match[1].trim();
     const blockMatch = rawText.match(/(?:^|\s)\^([A-Za-z0-9-]+)\s*$/);
     const label = stripBlockId(rawText);
-    if (!label) continue;
+    if (!label || isLinkOrPortalBullet(label)) continue;
 
     items.push({
       id: blockMatch ? blockMatch[1] : null,

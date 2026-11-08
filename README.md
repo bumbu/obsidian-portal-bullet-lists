@@ -7,7 +7,7 @@ A custom Obsidian plugin scaffold for dependency-style bullet lists.
 - Only enables itself for markdown files with a `tasks-dependency-list` frontmatter property.
 - Marks leaf list items with a visual leaf emoji.
 - Adds hidden `dbbl-*` IDs only when a bullet is referenced by a portal, using incremental IDs such as `dbbl-1`, `dbbl-2`, and so on.
-- Supports `[[#^dbbl-...]]` portal links and an `@` suggestion flow for choosing portal targets from the current document.
+- Supports `[[#^dbbl-...]]` portal links and an `@` suggestion flow for choosing portal targets from the current document. Portal bullets and link-only bullets are excluded from suggestions.
 - Re-renders portal targets as lists in reading mode, including nested portals.
   Circular references are shown as a warning instead of expanding indefinitely.
 

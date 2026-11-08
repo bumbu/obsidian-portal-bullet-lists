@@ -43,7 +43,12 @@ class Link extends Element {
 class TFile {}
 const rendered = [];
 const obsidian = {
-  Plugin: class {},
+  Plugin: class {
+    registerMarkdownPostProcessor() {}
+    registerEditorSuggest(suggest) {
+      this.suggest = suggest;
+    }
+  },
   EditorSuggest: class {},
   TFile,
   MarkdownRenderer: {
@@ -82,10 +87,40 @@ function createPlugin(markdown) {
     vault: {
       getAbstractFileByPath: () => file,
       read: async () => markdown,
+      cachedRead: async () => markdown,
     },
   };
   return plugin;
 }
+
+test("suggestions exclude portal and link bullets but keep ordinary bullets with links", async () => {
+  const markdown = [
+    "- [[#^dbbl-1]]",
+    "- [[#^dbbl-2|Portal]] ^dbbl-9",
+    "- See [[#^dbbl-1]]",
+    "- [[Other note]]",
+    "- [External](https://example.com)",
+    "- https://example.com",
+    "- <https://example.com>",
+    "- [ ] [[#^dbbl-1]]",
+    "- [x] [[Other note]]",
+    "- Regular item ^dbbl-3",
+    "- Read [[Other note]]",
+    "- Refer to [documentation](https://example.com)",
+  ].join("\n");
+  const plugin = createPlugin(markdown);
+  await plugin.onload();
+
+  const suggestions = await plugin.suggest.getSuggestions({ file: new TFile(), query: "" });
+  assert.deepEqual(Array.from(suggestions, (item) => item.label), [
+    "Regular item",
+    "Read [[Other note]]",
+    "Refer to [documentation](https://example.com)",
+  ]);
+  assert.equal(suggestions[0].id, "dbbl-3");
+  const filtered = await plugin.suggest.getSuggestions({ file: new TFile(), query: "REGULAR" });
+  assert.deepEqual(Array.from(filtered, (item) => item.label), ["Regular item"]);
+});
 
 test("dedents nested targets while retaining relative indentation and continuation text", () => {
   const plugin = createPlugin("");
