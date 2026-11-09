@@ -14,7 +14,6 @@ import {
 
 const REQUIREMENT_KEY = "tasks-dependency-list";
 const LEAF_EMOJI = "🌿";
-const ID_PREFIX = "dbbl";
 
 interface BulletCandidate {
   id: string | null;
@@ -186,15 +185,24 @@ function parseBulletCandidates(markdown: string): BulletCandidate[] {
   return items;
 }
 
-function nextBlockId(markdown: string): string {
-  let highest = 0;
+function nextBlockId(markdown: string, label: string): string {
+  const base = label
+    .replace(/^\[[ xX]\]\s*/, "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "item";
+  const usedIds = new Set<string>();
   for (const line of markdown.split(/\r?\n/)) {
     const match = line.match(/(?:^|\s)\^([A-Za-z0-9-]+)\s*$/);
-    if (!match) continue;
-    const numeric = Number(match[1].replace(new RegExp(`^${ID_PREFIX}-?`, "i"), ""));
-    if (!Number.isNaN(numeric)) highest = Math.max(highest, numeric);
+    if (match) usedIds.add(match[1].toLowerCase());
   }
-  return `${ID_PREFIX}-${highest + 1}`;
+  let id = base;
+  for (let suffix = 2; usedIds.has(id); suffix++) {
+    id = `${base}-${suffix}`;
+  }
+  return id;
 }
 
 function indentationWidth(indent: string): number {
@@ -391,9 +399,8 @@ export default class DependencyBulletListsPlugin extends Plugin {
     const markdown = editor.getValue();
     const lines = markdown.split(/\r?\n/);
     const line = lines[item.lineIndex];
-    const nextId = nextBlockId(markdown);
-
-    if (!line) return nextId;
+    if (!line) throw new Error("Cannot add a block ID: the selected bullet no longer exists.");
+    const nextId = nextBlockId(markdown, item.label);
 
     const updated = `${line} ^${nextId}`;
     editor.replaceRange(updated, { line: item.lineIndex, ch: 0 }, { line: item.lineIndex, ch: line.length });

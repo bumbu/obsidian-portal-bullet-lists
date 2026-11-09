@@ -67,7 +67,7 @@ const obsidian = {
 };
 
 const source = fs.readFileSync(path.join(__dirname, "..", "main.ts"), "utf8");
-const code = ts.transpileModule(source + "\nexports.testHelpers = { countPortalReferences, markReferencedItems, isPortalPlaceholder, ReferenceGutter };", {
+const code = ts.transpileModule(source + "\nexports.testHelpers = { countPortalReferences, markReferencedItems, isPortalPlaceholder, ReferenceGutter, nextBlockId };", {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2018 },
 }).outputText;
 const moduleStub = { exports: {} };
@@ -86,7 +86,7 @@ vm.runInNewContext(code, {
   MutationObserver: class { observe() {} disconnect() {} },
 });
 const Plugin = moduleStub.exports.default;
-const { countPortalReferences, markReferencedItems, isPortalPlaceholder, ReferenceGutter } = moduleStub.exports.testHelpers;
+const { countPortalReferences, markReferencedItems, isPortalPlaceholder, ReferenceGutter, nextBlockId } = moduleStub.exports.testHelpers;
 
 function createPlugin(markdown) {
   const file = new TFile();
@@ -100,6 +100,40 @@ function createPlugin(markdown) {
   };
   return plugin;
 }
+
+test("generates valid text-based IDs with unique suffixes and preserves existing IDs", () => {
+  assert.equal(nextBlockId("", "Change Radiators"), "change-radiators");
+  assert.equal(nextBlockId("", "[x] Café & Tea!"), "cafe-tea");
+  assert.equal(nextBlockId("", "🌿"), "item");
+  assert.equal(nextBlockId("Paragraph ^CHANGE-RADIATORS\n^change-radiators-2", "Change Radiators"), "change-radiators-3");
+  assert.equal(nextBlockId("- Old ^dbbl-1", "Change Radiators"), "change-radiators");
+  assert.equal(nextBlockId("Text ^item", "🌿"), "item-2");
+});
+
+test("suggestion selection adds a slug only when needed and links to it", async () => {
+  const plugin = createPlugin("");
+  await plugin.onload();
+  let lines = ["- Change Radiators", "- @"];
+  const editor = {
+    getValue: () => lines.join("\n"),
+    replaceRange: (text, start, end) => {
+      assert.equal(start.line, end.line);
+      lines[start.line] = lines[start.line].slice(0, start.ch) + text + lines[end.line].slice(end.ch);
+    },
+  };
+  const context = {
+    file: new TFile(), editor, start: { line: 1, ch: 2 }, end: { line: 1, ch: 3 }, query: "",
+  };
+  plugin.suggest.context = context;
+  const suggestions = await plugin.suggest.getSuggestions(context);
+  plugin.suggest.selectSuggestion(suggestions[0], {});
+  assert.deepEqual(lines, ["- Change Radiators ^change-radiators", "- [[#^change-radiators]]"]);
+
+  lines = ["- Existing ^dbbl-4", "- @"];
+  const existing = (await plugin.suggest.getSuggestions(context))[0];
+  plugin.suggest.selectSuggestion(existing, {});
+  assert.deepEqual(lines, ["- Existing ^dbbl-4", "- [[#^dbbl-4]]"]);
+});
 
 test("counts only direct same-note wikilink references, including aliases", () => {
   const counts = countPortalReferences({ links: [
