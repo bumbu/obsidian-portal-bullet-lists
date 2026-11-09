@@ -225,9 +225,9 @@ class DependencyBulletSuggest extends EditorSuggest<BulletCandidate> {
   }
 
   async getSuggestions(context: EditorSuggestContext): Promise<BulletCandidate[]> {
-    const markdown = await this.plugin.getFileMarkdown(context.file);
+    const markdown = context.editor.getValue();
     return parseBulletCandidates(markdown)
-      .filter((item) => item.label.toLowerCase().includes(context.query.toLowerCase()))
+      .filter((item) => item.lineIndex !== context.start.line && item.label.toLowerCase().includes(context.query.toLowerCase()))
       .slice(0, 10);
   }
 
@@ -258,10 +258,6 @@ export default class DependencyBulletListsPlugin extends Plugin {
     if (!file) return false;
     const cache = this.app.metadataCache.getFileCache(file);
     return hasFrontmatterFlag(cache?.frontmatter ?? null);
-  }
-
-  async getFileMarkdown(file: TFile): Promise<string> {
-    return this.app.vault.cachedRead(file);
   }
 
   ensureBulletId(editor: Editor, item: BulletCandidate): string {

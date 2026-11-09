@@ -111,15 +111,55 @@ test("suggestions exclude portal and link bullets but keep ordinary bullets with
   const plugin = createPlugin(markdown);
   await plugin.onload();
 
-  const suggestions = await plugin.suggest.getSuggestions({ file: new TFile(), query: "" });
+  const context = {
+    file: new TFile(),
+    editor: { getValue: () => markdown },
+    start: { line: 0, ch: 0 },
+    query: "",
+  };
+  const suggestions = await plugin.suggest.getSuggestions(context);
   assert.deepEqual(Array.from(suggestions, (item) => item.label), [
     "Regular item",
     "Read [[Other note]]",
     "Refer to [documentation](https://example.com)",
   ]);
   assert.equal(suggestions[0].id, "dbbl-3");
-  const filtered = await plugin.suggest.getSuggestions({ file: new TFile(), query: "REGULAR" });
+  const filtered = await plugin.suggest.getSuggestions({ ...context, query: "REGULAR" });
   assert.deepEqual(Array.from(filtered, (item) => item.label), ["Regular item"]);
+});
+
+test("suggestions exclude the current bullet using unsaved editor line positions", async () => {
+  const saved = "- Same\n- Target";
+  const markdown = "- New unsaved bullet\n- Same @\n- Same @\n- Target";
+  const plugin = createPlugin(saved);
+  await plugin.onload();
+  const context = {
+    file: new TFile(),
+    editor: { getValue: () => markdown },
+    start: { line: 1, ch: 7 },
+    query: "",
+  };
+
+  const suggestions = await plugin.suggest.getSuggestions(context);
+  assert.deepEqual(Array.from(suggestions, (item) => item.lineIndex), [0, 2, 3]);
+  assert.deepEqual(Array.from(suggestions, (item) => item.label), ["New unsaved bullet", "Same @", "Target"]);
+
+  const filtered = await plugin.suggest.getSuggestions({ ...context, query: "same" });
+  assert.deepEqual(Array.from(filtered, (item) => item.lineIndex), [2]);
+});
+
+test("excludes the current bullet before applying the suggestion limit", async () => {
+  const markdown = Array.from({ length: 11 }, (_, i) => `- Item ${i}`).join("\n");
+  const plugin = createPlugin(markdown);
+  await plugin.onload();
+  const suggestions = await plugin.suggest.getSuggestions({
+    file: new TFile(),
+    editor: { getValue: () => markdown },
+    start: { line: 0, ch: 0 },
+    query: "",
+  });
+
+  assert.deepEqual(Array.from(suggestions, (item) => item.lineIndex), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });
 
 test("dedents nested targets while retaining relative indentation and continuation text", () => {
