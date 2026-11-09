@@ -4,6 +4,47 @@
   opacity: 0.8;
 }
 
+.dbbl-has-reference-gutter {
+  position: relative;
+  padding-left: 1.6em;
+}
+
+.dbbl-reference-gutter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1.2em;
+}
+
+.dbbl-reference-badge {
+  position: absolute;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1em;
+  height: 1.1em;
+  border-radius: 50%;
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+  line-height: 1;
+  isolation: isolate;
+}
+
+.dbbl-reference-badge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--interactive-accent);
+  opacity: var(--dbbl-reference-intensity, 0);
+  z-index: -1;
+}
+
+.dbbl-reference-badge[hidden] {
+  display: none;
+}
+
 .dbbl-portal {
   display: block;
   margin: 0.2em 0 0;

@@ -4,7 +4,9 @@ import {
   EditorPosition,
   EditorSuggest,
   EditorSuggestContext,
+  CachedMetadata,
   MarkdownPostProcessorContext,
+  MarkdownRenderChild,
   MarkdownRenderer,
   Plugin,
   TFile,
@@ -18,6 +20,129 @@ interface BulletCandidate {
   id: string | null;
   label: string;
   lineIndex: number;
+}
+
+function countPortalReferences(cache: CachedMetadata): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const link of cache.links ?? []) {
+    const match = link.link.match(/^#\^([A-Za-z0-9-]+)$/);
+    if (!match || !link.original.startsWith("[[")) continue;
+    counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function markReferencedItems(el: HTMLElement, cache: CachedMetadata, start: number, end: number): void {
+  const items = (cache.listItems ?? []).filter((item) =>
+    item.position.start.line >= start && item.position.start.line <= end,
+  );
+  const elements = Array.from(el.querySelectorAll("li"));
+  if (items.length !== elements.length) {
+    console.warn("Dependency Bullet Lists: could not match rendered list items to their source.", { start, end });
+    return;
+  }
+  items.forEach((item, index) => {
+    if (item.id) elements[index].dataset.dbblReferenceId = item.id;
+  });
+}
+
+function isPortalPlaceholder(item: HTMLElement): boolean {
+  const hasPortalRoot = Array.from(item.querySelectorAll<HTMLElement>(".dbbl-portal")).some((portal) =>
+    portal.closest("li") === item && portal.querySelector("ul > li, ol > li"),
+  );
+  if (!hasPortalRoot) return false;
+
+  const content = item.cloneNode(true) as HTMLElement;
+  content.querySelectorAll(".dbbl-portal, ul, ol, .list-bullet, .dbbl-leaf-marker, input").forEach((el) => el.remove());
+  return !content.textContent?.trim();
+}
+
+class ReferenceGutter extends MarkdownRenderChild {
+  private readonly gutter: HTMLElement;
+  private readonly resizeObserver: ResizeObserver;
+  private readonly mutationObserver: MutationObserver;
+  private frame: number | null = null;
+  private badges: { item: HTMLElement; badge: HTMLElement }[] = [];
+
+  constructor(
+    container: HTMLElement,
+    private readonly app: App,
+    private readonly file: TFile,
+  ) {
+    super(container);
+    this.gutter = container.ownerDocument.createElement("div");
+    this.gutter.className = "dbbl-reference-gutter";
+    this.resizeObserver = new ResizeObserver(() => this.scheduleLayout());
+    this.mutationObserver = new MutationObserver((mutations) => {
+      if (mutations.some((mutation) => mutation.type === "childList" && !this.gutter.contains(mutation.target))) {
+        this.refresh();
+      } else {
+        this.scheduleLayout();
+      }
+    });
+  }
+
+  onload(): void {
+    this.containerEl.classList.add("dbbl-has-reference-gutter");
+    this.containerEl.prepend(this.gutter);
+    this.refresh();
+    this.resizeObserver.observe(this.containerEl);
+    this.mutationObserver.observe(this.containerEl, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "open"] });
+    this.registerDomEvent(this.containerEl.ownerDocument.defaultView!, "resize", () => this.scheduleLayout());
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => {
+      if (file.path === this.file.path) this.refresh();
+    }));
+  }
+
+  onunload(): void {
+    this.resizeObserver.disconnect();
+    this.mutationObserver.disconnect();
+    if (this.frame !== null) this.containerEl.ownerDocument.defaultView?.cancelAnimationFrame(this.frame);
+    this.gutter.remove();
+    this.containerEl.classList.remove("dbbl-has-reference-gutter");
+  }
+
+  private refresh(): void {
+    const cache = this.app.metadataCache.getFileCache(this.file);
+    if (!cache) {
+      console.warn("Dependency Bullet Lists: reference counts unavailable because note metadata is not ready.", this.file.path);
+      return;
+    }
+    const counts = countPortalReferences(cache);
+    this.gutter.replaceChildren();
+    this.badges = [];
+    for (const item of Array.from(this.containerEl.querySelectorAll<HTMLElement>("li"))) {
+      if (isPortalPlaceholder(item)) continue;
+      const count = counts.get(item.dataset.dbblReferenceId ?? "") ?? 0;
+      const badge = this.containerEl.ownerDocument.createElement("span");
+      badge.className = "dbbl-reference-badge";
+      badge.style.setProperty("--dbbl-reference-intensity", String(count === 0 ? 0 : Math.min(0.55, 0.12 + count * 0.06)));
+      const label = this.containerEl.ownerDocument.createElement("span");
+      label.textContent = String(count);
+      label.style.fontSize = `${Math.min(0.7, 1.4 / label.textContent.length)}em`;
+      badge.append(label);
+      badge.title = `Referenced ${count} ${count === 1 ? "time" : "times"}`;
+      badge.setAttribute("role", "img");
+      badge.setAttribute("aria-label", badge.title);
+      this.gutter.append(badge);
+      this.badges.push({ item, badge });
+    }
+    this.scheduleLayout();
+  }
+
+  private scheduleLayout(): void {
+    const win = this.containerEl.ownerDocument.defaultView;
+    if (!win || this.frame !== null) return;
+    this.frame = win.requestAnimationFrame(() => {
+      this.frame = null;
+      const top = this.containerEl.getBoundingClientRect().top;
+      for (const { item, badge } of this.badges) {
+        const visible = item.getClientRects().length > 0;
+        badge.hidden = !visible;
+        if (visible) badge.style.top = `${item.getBoundingClientRect().top - top}px`;
+      }
+    });
+  }
 }
 
 function hasFrontmatterFlag(frontmatter: Record<string, any> | null | undefined): boolean {
@@ -279,8 +404,22 @@ export default class DependencyBulletListsPlugin extends Plugin {
     if (!hasFrontmatterFlag(ctx.frontmatter ?? null)) return;
     if (el.closest(".dbbl-portal")) return;
 
+    const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
+    const section = ctx.getSectionInfo(el);
+    const cache = file instanceof TFile ? this.app.metadataCache.getFileCache(file) : null;
+    if (section && cache && el.querySelector("li")) {
+      markReferencedItems(el, cache, section.lineStart, section.lineEnd);
+    }
+
     this.decorateLeafBullets(el);
-    await this.renderPortalTargets(el, ctx.sourcePath);
+    await this.renderPortalTargets(el, ctx.sourcePath, undefined, new Set(), cache ?? undefined);
+    if (file instanceof TFile && el.querySelector("li")) {
+      if (!section || !cache) {
+        console.warn("Dependency Bullet Lists: reference gutter unavailable because section metadata is not ready.", ctx.sourcePath);
+      } else {
+        ctx.addChild(new ReferenceGutter(el, this.app, file));
+      }
+    }
   }
 
   decorateLeafBullets(el: HTMLElement): void {
@@ -305,6 +444,7 @@ export default class DependencyBulletListsPlugin extends Plugin {
     sourcePath: string,
     source?: string,
     ancestors: ReadonlySet<string> = new Set(),
+    cache?: CachedMetadata,
   ): Promise<void> {
     if (source === undefined) {
       const file = this.app.vault.getAbstractFileByPath(sourcePath);
@@ -332,7 +472,15 @@ export default class DependencyBulletListsPlugin extends Plugin {
       const wrapper = document.createElement("div");
       wrapper.className = "dbbl-portal";
       await MarkdownRenderer.render(this.app, subtree, wrapper, sourcePath, this);
-      await this.renderPortalTargets(wrapper, sourcePath, source, new Set([...ancestors, portalId]));
+      if (cache) {
+        const target = cache.listItems?.find((item) => item.id === portalId);
+        if (target) {
+          const start = target.position.start.line;
+          const range = extractSubtreeLines(source.split(/\r?\n/), start);
+          if (range) markReferencedItems(wrapper, cache, start, range.endIndex - 1);
+        }
+      }
+      await this.renderPortalTargets(wrapper, sourcePath, source, new Set([...ancestors, portalId]), cache);
       link.replaceWith(wrapper);
     }
   }

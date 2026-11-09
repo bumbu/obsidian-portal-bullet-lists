@@ -10,6 +10,7 @@ A custom Obsidian plugin scaffold for dependency-style bullet lists.
 - Supports `[[#^dbbl-...]]` portal links and an `@` suggestion flow for choosing portal targets from the current document. The current bullet, portal bullets, and link-only bullets are excluded from suggestions.
 - Re-renders portal targets as lists in reading mode, including nested portals.
   Circular references are shown as a warning instead of expanding indefinitely.
+- In reading mode, every list item has a circular badge in the left gutter showing the number of direct same-note portal links to it, including zero for unreferenced items. Its accent background becomes stronger as the count increases, up to a capped intensity. Badges share a column regardless of nesting and appear on mirrored tasks too. Expanded copies do not increase the count.
 
 ## Development
 
